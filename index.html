@@ -104,14 +104,21 @@
       </div>
 
       <div class="card">
-        <h2>Deine Daten</h2>
-        <p>Fortschritt und Standort bleiben auf diesem Gerät. Es gibt kein Konto und keinen Server, der mitliest. Sichere deinen Stand ab und zu als Datei.</p>
+        <h2>Profile</h2>
+        <p>Jedes Profil hat seinen eigenen Fortschritt – praktisch, wenn mehrere an einem Gerät spielen. Es gibt kein Konto und keinen Server, der mitliest.</p>
+        <div id="profile-list"></div>
         <div class="row">
-          <button class="btn" id="btn-export" type="button">Stand sichern</button>
-          <label class="btn" for="file-restore">Stand laden</label>
+          <button class="btn" id="btn-profile-new" type="button">Neues Profil</button>
+          <button class="btn" id="btn-profile-rename" type="button">Umbenennen</button>
+        </div>
+        <h3>Fortschritt mitnehmen</h3>
+        <p>Exportiere das aktive Profil als Datei und importiere es auf einem anderen Gerät. Gibt es das Profil dort schon, werden beide Stände zusammengeführt – nichts geht verloren.</p>
+        <div class="row">
+          <button class="btn" id="btn-export" type="button">Profil exportieren</button>
+          <label class="btn" for="file-restore">Profil importieren</label>
           <input id="file-restore" type="file" accept=".json,application/json" hidden>
         </div>
-        <button class="btn danger" id="btn-reset" type="button">Alles zurücksetzen</button>
+        <button class="btn danger" id="btn-reset" type="button">Aktives Profil löschen</button>
       </div>
 
       <p><a class="btn" href="impressum.html">Impressum und Datenschutz</a></p>

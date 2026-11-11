@@ -5,14 +5,31 @@
   const { computeStats, milestones, quests, areaBadges, fmt } = window.TJGame;
   const $ = (s, el = document) => el.querySelector(s);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const KEY = 'treppenjagd.v1';
+  const KEY = 'treppenjagd.v2', OLD_KEY = 'treppenjagd.v1';
   const COLORS = { open: '#e4572e', done: '#1f7a4d', bonus: '#7d8a92' };
 
-  // ---------- Zustand -------------------------------------------------------
-  const blank = () => ({ v: 1, log: [], goal: 4, seen: {}, level: 1, onboarded: false });
-  let state = blank();
-  try { const raw = localStorage.getItem(KEY); if (raw) state = Object.assign(blank(), JSON.parse(raw)); } catch (e) { /* privater Modus */ }
-  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* ohne Speicher weiterlaufen */ } };
+  // ---------- Zustand: Profile ---------------------------------------------
+  // store = alles auf diesem Gerät; state = das gerade aktive Profil.
+  const newId = () => 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const cleanName = (n) => String(n || '').replace(/\s+/g, ' ').trim().slice(0, 24);
+  const blank = (name) => ({ id: newId(), name: cleanName(name) || 'Ich', created: Date.now(), log: [], goal: 4, seen: {}, level: 1, onboarded: false });
+  let store = { v: 2, active: null, profiles: {}, friends: [] };
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) store = Object.assign(store, JSON.parse(raw));
+    else {
+      const old = localStorage.getItem(OLD_KEY); // Stand aus der ersten Version übernehmen
+      if (old) { const p = Object.assign(blank(), JSON.parse(old)); store.profiles[p.id] = p; store.active = p.id; }
+    }
+  } catch (e) { /* privater Modus */ }
+  if (!store.profiles[store.active]) {
+    const first = Object.keys(store.profiles)[0];
+    if (first) store.active = first;
+    else { const p = blank(); store.profiles[p.id] = p; store.active = p.id; }
+  }
+  if (!Array.isArray(store.friends)) store.friends = [];
+  let state = store.profiles[store.active];
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) { /* ohne Speicher weiterlaufen */ } };
 
   let DATA, AREAS, areaById, areaNames, byId, index, stats, map, pos = null;
   const layers = new Map(); // id -> {lines:[], dot}
@@ -392,7 +409,7 @@
       <div class="card level-card">
         ${levelEmblem(lv.level, 96)}
         <div>
-          <p class="eyebrow">Level ${lv.level}</p>
+          <p class="eyebrow">Level ${lv.level} · ${esc(state.name)}</p>
           <h1>${esc(lv.title)}</h1>
           <p>${esc(lv.text)}</p>
         </div>
@@ -426,8 +443,61 @@
       <div class="card districts">${dists.map(([n, d]) => `<details class="district"${openDistricts.has(n) ? ' open' : ''} data-d="${esc(n)}"><summary><span>${esc(n)}</span><span class="num">${d.done}/${d.total}</span>${bar(d.total ? d.done / d.total : 0)}</summary>
         ${AREAS.filter((a) => a.b === n).map((a) => ({ a, st: areaStat(a.id) })).sort((x, y) => y.st.total - x.st.total).map(({ a, st }) => `<button class="area-row${st.total && st.done === st.total ? ' done' : ''}" data-area="${a.id}"><span>${esc(a.n)}</span><span class="num">${st.total ? `${st.done}/${st.total}` : '–'}</span>${bar(st.total ? st.done / st.total : 0)}</button>`).join('')}
       </details>`).join('')}</div>
-      ${stats.bonus ? `<p class="fine">Dazu ${stats.bonus} kleine Bonus-Treppen.</p>` : ''}`;
+      ${stats.bonus ? `<p class="fine">Dazu ${stats.bonus} kleine Bonus-Treppen.</p>` : ''}
+      <h2 class="section">Rangliste</h2>
+      <div class="card ranks">${rankRows().map((r, i) => `<${r.friend != null ? `button data-friend="${r.friend}"` : 'div'} class="rank${r.me ? ' me' : ''}">
+          <span class="rank-n">${i + 1}</span>${levelEmblem(r.level, 34)}
+          <span class="rank-name"><b>${esc(r.name)}</b><small>${r.me ? 'du' : r.local ? 'Profil auf diesem Gerät' : 'Stand ' + new Date(r.at).toLocaleDateString('de-DE')} · ${r.found} Treppen</small></span>
+          <span class="rank-xp">${fmt(r.xp)}<small>Punkte</small></span></${r.friend != null ? 'button' : 'div'}>`).join('')}</div>
+      <button class="btn primary wide" id="btn-share" type="button">Meinen Stand teilen</button>
+      <p class="fine">Die Rangliste kommt ohne Server aus: Schick anderen deinen Link, sie schicken dir ihren. Jeder Eintrag zeigt den Stand vom Tag des Teilens – für ein Update einfach neu teilen.</p>`;
   }
+
+  // ---------- Rangliste (ohne Server, über geteilte Links) ------------------
+  const summary = (p) => {
+    const st = p === state ? stats : computeStats(p.log, byId, DATA.meta, today());
+    return { id: p.id, name: p.name, xp: st.xp, found: st.found, steps: st.steps, areas: st.areasDone, level: st.level.level };
+  };
+  function rankRows() {
+    const rows = Object.values(store.profiles).map((p) => ({ ...summary(p), me: p === state, local: p !== state }));
+    store.friends.forEach((f, i) => rows.push({ ...f, level: window.TJGame.levelFor(f.xp).level, friend: i }));
+    return rows.sort((a, b) => b.xp - a.xp || b.found - a.found);
+  }
+  const b64e = (str) => btoa(String.fromCharCode(...new TextEncoder().encode(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const b64d = (str) => new TextDecoder().decode(Uint8Array.from(atob(str.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)));
+  async function shareStand() {
+    const m = summary(state);
+    const url = location.origin + location.pathname + '#r=' + b64e(JSON.stringify({ i: m.id, n: m.name, x: m.xp, f: m.found, s: m.steps, a: m.areas, t: Date.now() }));
+    const text = `${m.name} bei der Treppenjagd Wuppertal: ${m.found} Treppen, ${fmt(m.xp)} Punkte. Nimm mich in deine Rangliste auf:`;
+    try { if (navigator.share) { await navigator.share({ title: 'Treppenjagd Wuppertal', text, url }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(`${text} ${url}`); toast('Link kopiert – schick ihn an deine Freunde.', true); }
+    catch (e) { modal(`<h2>Dein Link</h2><p>Kopiere ihn und schick ihn an deine Freunde.</p><textarea class="input" rows="5" readonly>${esc(url)}</textarea><button class="btn primary" data-close>Fertig</button>`); }
+  }
+  /** Geteilten Link (#r=…) entgegennehmen. */
+  function readSharedLink() {
+    const m = /^#r=([A-Za-z0-9_-]{8,2000})$/.exec(location.hash);
+    if (!m) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    let f;
+    try {
+      const o = JSON.parse(b64d(m[1]));
+      const num = (v, max) => Math.max(0, Math.min(max, Math.round(Number(v)) || 0));
+      f = { id: String(o.i || '').slice(0, 40), name: cleanName(o.n), xp: num(o.x, 5e6), found: num(o.f, 5000), steps: num(o.s, 5e6), areas: num(o.a, 100), at: num(o.t, 4e12) || Date.now() };
+      if (!f.id || !f.name) throw new Error('unvollständig');
+    } catch (e) { return toast('Dieser Ranglisten-Link ist beschädigt.'); }
+    if (store.profiles[f.id]) return toast('Das ist dein eigener Link – schick ihn an andere.');
+    const known = store.friends.findIndex((x) => x.id === f.id);
+    modal(`<div class="celebrate">${levelEmblem(window.TJGame.levelFor(f.xp).level, 96)}
+      <p class="eyebrow">Rangliste</p><h2>${esc(f.name)}</h2>
+      <p>${f.found} Treppen · ${fmt(f.xp)} Punkte · ${f.areas} Quartiere komplett</p>
+      <button class="btn primary" id="friend-add">${known >= 0 ? 'Stand aktualisieren' : 'In meine Rangliste aufnehmen'}</button>
+      <button class="btn" data-close>Nicht jetzt</button></div>`);
+    $('#friend-add').addEventListener('click', () => {
+      if (known >= 0) store.friends[known] = f; else store.friends.push(f);
+      save(); closeModal(); switchView('progress'); toast(`${f.name} steht jetzt in deiner Rangliste.`, true);
+    });
+  }
+  window.addEventListener('hashchange', readSharedLink);
   const openDistricts = new Set();
   $('#progress-body').addEventListener('toggle', (e) => {
     const d = e.target.closest && e.target.closest('details[data-d]');
@@ -439,7 +509,15 @@
     const q = e.target.closest('[data-stair]');
     if (q) return focusStair(Number(q.dataset.stair));
     if (e.target.closest('[data-go]')) return switchView('badges');
-    if (e.target.closest('#q-locate')) locateOnce();
+    if (e.target.closest('#q-locate')) return locateOnce();
+    if (e.target.closest('#btn-share')) return shareStand();
+    const fr = e.target.closest('[data-friend]');
+    if (fr) {
+      const i = Number(fr.dataset.friend), f = store.friends[i];
+      modal(`<h2>${esc(f.name)}</h2><p>${f.found} Treppen · ${fmt(f.xp)} Punkte · ${f.areas} Quartiere komplett<br>Stand vom ${new Date(f.at).toLocaleDateString('de-DE')}</p>
+        <div class="row"><button class="btn" data-close>Schließen</button><button class="btn danger" id="friend-del">Aus Rangliste entfernen</button></div>`);
+      $('#friend-del').addEventListener('click', () => { store.friends.splice(i, 1); save(); closeModal(); renderProgress(); });
+    }
   });
 
   let badgeList = [];
@@ -527,26 +605,85 @@
     if (picked.length) { addAscents(picked); switchView('progress'); }
   }
 
-  // ---------- Sichern / Laden / Zurücksetzen --------------------------------
+  // ---------- Profile: wechseln, anlegen, exportieren, importieren ---------
+  function activate(id) {
+    if (tour) stopTour();
+    store.active = id; state = store.profiles[id];
+    queue.length = 0; closeSheet();
+    stats = computeStats(state.log, byId, DATA.meta, today());
+    state.level = Math.max(state.level, stats.level.level);
+    refresh(); renderGoal(); renderProfiles();
+  }
+  function renderProfiles() {
+    $('#profile-list').innerHTML = Object.values(store.profiles).map((p) => {
+      const m = summary(p);
+      return `<button class="profile-row${p === state ? ' active' : ''}" data-profile="${esc(p.id)}" aria-pressed="${p === state}">${levelEmblem(m.level, 38)}
+        <span><b>${esc(p.name)}</b><small>${m.found} Treppen · ${fmt(m.xp)} Punkte</small></span><span class="pill">${p === state ? 'aktiv' : 'wechseln'}</span></button>`;
+    }).join('');
+  }
+  function askName(title, value, done) {
+    modal(`<h2>${esc(title)}</h2><label class="fine" for="name-input">Name (höchstens 24 Zeichen)</label>
+      <input class="input" id="name-input" maxlength="24" value="${esc(value)}" autocomplete="off">
+      <div class="row"><button class="btn" data-close>Abbrechen</button><button class="btn primary" id="name-ok">Speichern</button></div>`);
+    const inp = $('#name-input'); inp.focus(); inp.select();
+    const ok = () => { const n = cleanName(inp.value); if (!n) return inp.focus(); closeModal(); done(n); };
+    $('#name-ok').addEventListener('click', ok);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
+  }
+  $('#profile-list').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-profile]');
+    if (b && b.dataset.profile !== store.active) { activate(b.dataset.profile); toast(`Profil gewechselt: ${state.name}`, true); }
+  });
+  $('#btn-profile-new').addEventListener('click', () => askName('Neues Profil', '', (n) => {
+    const p = blank(n); p.onboarded = true; store.profiles[p.id] = p; activate(p.id); toast(`Profil „${n}“ angelegt.`, true);
+  }));
+  $('#btn-profile-rename').addEventListener('click', () => askName('Profil umbenennen', state.name, (n) => { state.name = n; save(); renderProfiles(); }));
+
   $('#btn-export').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(state)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ app: 'treppenjagd', v: 2, profile: state })], { type: 'application/json' });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = `treppenjagd-${today()}.json`; a.click();
+    a.href = URL.createObjectURL(blob);
+    a.download = `treppenjagd-${state.name.toLowerCase().replace(/[^a-z0-9äöüß]+/g, '-') || 'profil'}-${today()}.json`; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
   $('#file-restore').addEventListener('change', async (e) => {
     const f = e.target.files[0]; e.target.value = '';
     if (!f) return;
     try {
-      const s = JSON.parse(await f.text());
-      if (!Array.isArray(s.log)) throw new Error('kein Spielstand');
-      state = Object.assign(blank(), s); refresh(); renderGoal(); toast(`Stand geladen: ${stats.found} Treppen`, true);
-    } catch (err) { toast('Das ist keine Treppenjagd-Sicherung.'); }
+      const raw = JSON.parse(await f.text());
+      const src = raw && raw.profile ? raw.profile : raw;
+      if (!src || !Array.isArray(src.log)) throw new Error('kein Spielstand');
+      const log = src.log.filter((x) => x && Number.isFinite(x.id) && /^\d{4}-\d{2}-\d{2}$/.test(x.d))
+        .map((x) => ({ id: x.id, d: x.d, t: Number.isFinite(x.t) ? x.t : null, src: String(x.src || 'import').slice(0, 12) }));
+      const seen = src.seen && typeof src.seen === 'object' ? src.seen : {};
+      // Gleiches Profil (oder alte Sicherung ohne Profil-Kennung): zusammenführen. Sonst als neues Profil anlegen.
+      const target = store.profiles[src.id] || (src.id ? null : state);
+      if (target) {
+        const have = new Set(target.log.map((x) => x.id + '|' + x.d));
+        let added = 0;
+        for (const x of log) if (!have.has(x.id + '|' + x.d)) { have.add(x.id + '|' + x.d); target.log.push(x); added++; }
+        for (const k of Object.keys(seen)) if (/^\d{4}-\d{2}-\d{2}$/.test(seen[k]) && (!target.seen[k] || seen[k] < target.seen[k])) target.seen[k] = seen[k];
+        activate(target.id);
+        toast(added ? `„${target.name}“ zusammengeführt: ${added === 1 ? '1 neuer Eintrag' : added + ' neue Einträge'}.` : `„${target.name}“ war schon auf dem neuesten Stand.`, true);
+      } else {
+        const p = blank(src.name); p.id = String(src.id).slice(0, 40); p.log = log; p.onboarded = true;
+        p.goal = [2, 4, 7, 12].includes(src.goal) ? src.goal : 4;
+        for (const k of Object.keys(seen)) if (/^\d{4}-\d{2}-\d{2}$/.test(seen[k])) p.seen[k] = seen[k];
+        store.profiles[p.id] = p; activate(p.id);
+        toast(`Profil „${p.name}“ importiert: ${stats.found} Treppen.`, true);
+      }
+    } catch (err) { toast('Das ist keine Treppenjagd-Datei.'); }
   });
   $('#btn-reset').addEventListener('click', () => {
-    modal(`<h2>Wirklich alles löschen?</h2><p>${stats.found} Treppen und ${fmt(stats.xp)} Punkte gehen verloren. Das lässt sich nicht rückgängig machen.</p>
+    const only = Object.keys(store.profiles).length === 1;
+    modal(`<h2>Profil „${esc(state.name)}“ löschen?</h2><p>${stats.found} Treppen und ${fmt(stats.xp)} Punkte gehen verloren. Das lässt sich nicht rückgängig machen – exportiere das Profil vorher, wenn du es behalten willst.</p>
       <div class="row"><button class="btn" data-close>Abbrechen</button><button class="btn danger" id="reset-yes">Löschen</button></div>`);
-    $('#reset-yes').addEventListener('click', () => { state = blank(); state.onboarded = true; closeModal(); refresh(); renderGoal(); });
+    $('#reset-yes').addEventListener('click', () => {
+      const name = state.name;
+      delete store.profiles[state.id];
+      if (only) { const p = blank(name); p.onboarded = true; store.profiles[p.id] = p; }
+      closeModal(); activate(Object.keys(store.profiles)[0]);
+    });
   });
 
   // ---------- Start ---------------------------------------------------------
@@ -555,10 +692,13 @@
       <p class="eyebrow">Treppenjagd Wuppertal</p>
       <h2>${DATA.meta.collectible} Treppen warten auf dich</h2>
       <p>Lauf eine Treppe, und sie gehört dir. Die App erkennt sie per GPS – oder nachträglich aus deinen aufgezeichneten Wegen.</p>
+      <label for="onb-name"><b>Wie heißt du?</b></label>
+      <input class="input" id="onb-name" maxlength="24" placeholder="Name für dein Profil" autocomplete="off">
       <p><b>Wie viele Treppen pro Woche passen zu dir?</b></p>
       <div class="seg">${[2, 4, 7, 12].map((n) => `<button type="button" data-goal="${n}" aria-pressed="${state.goal === n}">${n}<small>pro Woche</small></button>`).join('')}</div>
       <button class="btn primary" data-close>Los geht’s</button>
-      <p class="fine">Dein Standort bleibt auf deinem Gerät.</p></div>`, () => { state.onboarded = true; save(); });
+      <p class="fine">Dein Standort bleibt auf deinem Gerät.</p></div>`, () => { state.onboarded = true; save(); renderProfiles(); readSharedLink(); });
+    $('#onb-name').addEventListener('input', (e) => { state.name = cleanName(e.target.value) || 'Ich'; });
   }
 
   async function start() {
@@ -569,11 +709,11 @@
     index = buildIndex(DATA.stairs);
     stats = computeStats(state.log, byId, DATA.meta, today());
     state.level = Math.max(state.level, stats.level.level);
-    initMap(); paintAll(); renderHud(); renderGoal();
-    if (!state.onboarded) onboarding();
+    initMap(); paintAll(); renderHud(); renderGoal(); renderProfiles();
+    if (!state.onboarded) onboarding(); else readSharedLink();
     if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
   }
   start().catch((err) => { console.error(err); document.body.insertAdjacentHTML('beforeend', '<p class="fatal">Die Treppendaten konnten nicht geladen werden. Bitte Seite neu laden.</p>'); });
 
-  window.TJApp = { addAscents, openArea, focusArea, get stats() { return stats; }, get index() { return index; } };
+  window.TJApp = { addAscents, openArea, focusArea, get store() { return store; }, get stats() { return stats; }, get index() { return index; } };
 })();
