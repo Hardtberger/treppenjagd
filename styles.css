@@ -1,4 +1,7 @@
 /* Treppenjagd Wuppertal – Bergischer Dreiklang: Schiefer, Weiß, Grün (+ Bernstein für Erfolge) */
+@font-face { font-family: "anton"; src: url("vendor/fonts/anton-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "aileron"; src: url("vendor/fonts/aileron-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "aileron"; src: url("vendor/fonts/aileron-700.woff2") format("woff2"); font-weight: 700; font-display: swap; }
 :root {
   --slate: #22292e;
   --ink: #22292e;
