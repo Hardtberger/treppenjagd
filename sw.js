@@ -1,7 +1,7 @@
 /* Offline-Unterstützung: App-Hülle und Treppendaten werden zwischengespeichert.
    Kartenkacheln kommen immer frisch vom Kartenserver (Browser-Cache genügt). */
-const CACHE = 'treppenjagd-v3';
-const SHELL = ['./', 'index.html', 'styles.css', 'js/match.js', 'js/game.js', 'js/app.js', 'data/stairs.json', 'data/areas.json', 'icons/icon.svg', 'manifest.webmanifest',
+const CACHE = 'treppenjagd-v4';
+const SHELL = ['./', 'index.html', 'impressum.html', 'styles.css', 'js/match.js', 'js/game.js', 'js/app.js', 'data/stairs.json', 'data/areas.json', 'icons/icon.svg', 'manifest.webmanifest',
   'vendor/leaflet/leaflet.css', 'vendor/leaflet/leaflet.js', 'vendor/fonts/anton-400.woff2', 'vendor/fonts/aileron-400.woff2', 'vendor/fonts/aileron-700.woff2'];
 self.addEventListener('install', (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())));
 self.addEventListener('activate', (e) => e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())));
