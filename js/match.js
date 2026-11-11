@@ -11,27 +11,38 @@
   const toXY = (lat, lon) => [lon * MX, lat * MY];
   const distM = (a, b) => Math.hypot((a[1] - b[1]) * MX, (a[0] - b[0]) * MY);
 
-  /** Profile: wie streng wird abgeglichen? */
+  /** Profile: wie streng wird abgeglichen?
+      cover = Anteil der Treppe, der gelaufen sein muss.
+      mode 'along' (Standard): Jeder Wegpunkt zählt nur für die Stelle der Treppe, die ihm am nächsten liegt.
+        Wer am Einstieg steht, hat damit nur den Einstieg – nicht die halbe Treppe im Umkreis.
+      mode 'near': alles im Umkreis der Spur zählt. Nur für grobe Daten mit wenigen Punkten. */
+  const STEP = 3; // m: so fein wird die Spur zwischen zwei GPS-Punkten abgetastet
   const PROFILES = {
-    live: { tol: 14, maxGap: 120, cover: 0.65 },      // eigenes GPS, hohe Genauigkeit
-    gpx: { tol: 16, maxGap: 200, cover: 0.6 },        // aufgezeichnete Tracks
-    timeline: { tol: 28, maxGap: 450, cover: 0.5 },   // Google-Zeitachse: grob
+    live: { tol: 14, maxGap: 120, cover: 0.8 },                     // eigenes GPS, hohe Genauigkeit
+    gpx: { tol: 16, maxGap: 200, cover: 0.8 },                      // aufgezeichnete Tracks
+    timeline: { tol: 28, maxGap: 450, cover: 0.8, mode: 'near' },   // Google-Zeitachse: grob
   };
 
   function buildIndex(stairs) {
     const grid = new Map();
     const items = [];
     stairs.forEach((s, idx) => {
+      // Prüfpunkte gleichmäßig nach Streckenlänge verteilen, damit „80 % der Punkte“ auch „80 % der Treppe“ heißt
       const pts = [];
       for (const line of s.g) {
-        for (let i = 0; i < line.length - 1; i++) {
-          const a = toXY(line[i][0], line[i][1]);
-          const b = toXY(line[i + 1][0], line[i + 1][1]);
-          const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-          const n = Math.max(1, Math.round(len / SAMPLE));
-          for (let k = i === 0 ? 0 : 1; k <= n; k++) {
-            pts.push([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]);
+        const xy = line.map((p) => toXY(p[0], p[1]));
+        let total = 0;
+        for (let i = 0; i < xy.length - 1; i++) total += Math.hypot(xy[i + 1][0] - xy[i][0], xy[i + 1][1] - xy[i][1]);
+        const n = Math.max(1, Math.ceil(total / SAMPLE)), step = total / n;
+        let seg = 0, segStart = 0, segLen = xy.length > 1 ? Math.hypot(xy[1][0] - xy[0][0], xy[1][1] - xy[0][1]) : 0;
+        for (let k = 0; k <= n; k++) {
+          const d = Math.min(total, k * step);
+          while (seg < xy.length - 2 && d > segStart + segLen) {
+            segStart += segLen; seg++;
+            segLen = Math.hypot(xy[seg + 1][0] - xy[seg][0], xy[seg + 1][1] - xy[seg][1]);
           }
+          const f = segLen ? Math.min(1, (d - segStart) / segLen) : 0;
+          pts.push([xy[seg][0] + (xy[seg + 1][0] - xy[seg][0]) * f, xy[seg][1] + (xy[seg + 1][1] - xy[seg][1]) * f]);
         }
       }
       items.push({ id: s.id, pts });
@@ -65,6 +76,7 @@
       this.cov = new Map(); // idx -> {hit:Uint8Array, n:number, t:number|null}
       this.done = new Map(); // id -> t
       this.last = null;
+      this.partial = null; // zuletzt berührte, noch nicht fertige Treppe: {id, f}
     }
     /** Punkt = [lat, lon, zeitMs|null]. Gibt neu erkannte Treppen-IDs zurück. */
     push(pt) {
@@ -77,8 +89,46 @@
       return this._feed(prev.xy, cur.xy, cur.t);
     }
     reset() { this.last = null; }
+    _need(it) { return it.pts.length <= 3 ? it.pts.length : Math.ceil(it.pts.length * this.p.cover); }
     _feed(a, b, t) {
-      const { tol, cover } = this.p;
+      if (this.p.mode === 'near') return this._feedNear(a, b, t);
+      const tol = this.p.tol, tol2 = tol * tol;
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const n = Math.max(1, Math.ceil(len / STEP));
+      const fresh = [];
+      for (let s = len === 0 ? n : 0; s <= n; s++) {
+        const p = [a[0] + ((b[0] - a[0]) * s) / n, a[1] + ((b[1] - a[1]) * s) / n];
+        const x0 = Math.floor((p[0] - tol) / CELL), x1 = Math.floor((p[0] + tol) / CELL);
+        const y0 = Math.floor((p[1] - tol) / CELL), y1 = Math.floor((p[1] + tol) / CELL);
+        const cand = new Set();
+        for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+          const c = this.index.grid.get(x + ':' + y);
+          if (c) for (const i of c) cand.add(i);
+        }
+        for (const i of cand) {
+          const it = this.index.items[i];
+          if (this.done.has(it.id)) continue;
+          // nur die nächstgelegene Stelle der Treppe zählt
+          let best = -1, bd = tol2;
+          for (let k = 0; k < it.pts.length; k++) {
+            const dx = it.pts[k][0] - p[0], dy = it.pts[k][1] - p[1], d = dx * dx + dy * dy;
+            if (d <= bd) { bd = d; best = k; }
+          }
+          if (best < 0) continue;
+          let c = this.cov.get(i);
+          if (!c) { c = { hit: new Uint8Array(it.pts.length), n: 0, t0: t }; this.cov.set(i, c); }
+          if (!c.hit[best]) { c.hit[best] = 1; c.n++; }
+          const need = this._need(it);
+          // Mindestdauer: Niemand steigt eine Treppe schneller als mit 3 m/s. Verhindert Sofort-Treffer im Vorbeigehen.
+          const longEnough = !t || !c.t0 || t - c.t0 >= Math.max(5, (it.pts.length * SAMPLE) / 3) * 1000;
+          if (c.n >= need && longEnough) { this.done.set(it.id, t); fresh.push(it.id); if (this.partial && this.partial.id === it.id) this.partial = null; }
+          else this.partial = { id: it.id, f: c.n / it.pts.length }; // Anteil der Treppe, der schon gelaufen ist
+        }
+      }
+      return fresh;
+    }
+    _feedNear(a, b, t) {
+      const { tol } = this.p;
       const tol2 = tol * tol;
       const x0 = Math.floor((Math.min(a[0], b[0]) - tol) / CELL), x1 = Math.floor((Math.max(a[0], b[0]) + tol) / CELL);
       const y0 = Math.floor((Math.min(a[1], b[1]) - tol) / CELL), y1 = Math.floor((Math.max(a[1], b[1]) + tol) / CELL);
@@ -100,7 +150,7 @@
           }
         }
         if (!c) continue;
-        const need = it.pts.length <= 3 ? it.pts.length : Math.ceil(it.pts.length * cover);
+        const need = this._need(it);
         if (c.n >= need) { this.done.set(it.id, t); fresh.push(it.id); }
       }
       return fresh;

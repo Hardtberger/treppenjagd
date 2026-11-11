@@ -199,6 +199,13 @@
       const added = addAscents(hits.map((id) => ({ id, t: Date.now(), src: 'gps' })));
       for (const a of added) { tour.found.push(a.id); tour.steps += byId.get(a.id).s; }
     }
+    // Zwischenstand zeigen, solange man auf einer Treppe unterwegs ist (sie zählt ab 80 %)
+    const part = tour.matcher.partial;
+    if (part && part !== tour.lastPartial && !hits.length && byId.has(part.id)) {
+      tour.lastPartial = part;
+      return tourStatus(`${byId.get(part.id).n}: ${Math.min(79, Math.round(part.f * 100))} % gelaufen – zählt ab 80 %`);
+    }
+    tour.lastPartial = part;
     tourStatus(tour.found.length ? `${tour.found.length} ${tour.found.length === 1 ? 'Treppe' : 'Treppen'} · ${fmt(tour.steps)} Stufen` : 'Tour läuft – lauf einfach los');
   }
   const tourStatus = (t) => { $('#tour-status').textContent = t; };

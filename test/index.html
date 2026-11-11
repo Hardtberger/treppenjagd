@@ -11,7 +11,7 @@ const index = buildIndex(DATA.stairs);
 const out = [];
 let fail = 0; const ok = (c, m) => { out.push((c ? 'ok   ' : 'FAIL ') + m); if (!c) fail++; };
 const jitter = (p, m) => [p[0] + (m / 110540) * (Math.sin(p[0] * 9e5) ), p[1] + (m / 69700) * Math.cos(p[1] * 9e5)];
-const walk = (id, t0, noise = 5) => byId.get(id).g.flatMap((l) => l).map((p, i) => [...jitter(p, noise), t0 + i * 8000]);
+const walk = (id, t0, noise = 5) => byId.get(id).g.flatMap((l) => l).map((p, i) => [...jitter(p, noise), t0 + i * 45000]);  // gemächlich: 45 s je Wegpunkt
 
 const JAKOB = 93211072, HOLST = 26743278, TTT = 153827652;
 // 1) sauberer GPX-Lauf mit 5 m Rauschen
@@ -45,6 +45,49 @@ ok(r.includes(TTT), 'Zeitachse (iOS geo:) wird gelesen');
 const m = new Matcher(index, 'live'); let live = [];
 for (const p of walk(HOLST, Date.now(), 4)) live.push(...m.push(p));
 ok(live.includes(HOLST), 'Live-Erkennung meldet Holsteiner Treppe');
+// 8b) 80-%-Regel: Betreten allein darf nichts freischalten
+const M_LAT = 110540, M_LON = 69700;
+const dM = (a, b) => Math.hypot((a[0] - b[0]) * M_LAT, (a[1] - b[1]) * M_LON);
+/** Punkt bei Anteil f der Länge einer Linie */
+const alongLen = (line, f) => {
+  const total = line.slice(1).reduce((n, p, i) => n + dM(line[i], p), 0); let rest = total * f;
+  for (let i = 0; i < line.length - 1; i++) { const d = dM(line[i], line[i + 1]); if (rest <= d || i === line.length - 2) { const k = d ? Math.min(1, rest / d) : 0; return [line[i][0] + (line[i + 1][0] - line[i][0]) * k, line[i][1] + (line[i + 1][1] - line[i][1]) * k]; } rest -= d; }
+};
+/** Lauf über den Anteil [0, upTo] der Treppe: ein GPS-Punkt alle `every` Meter, 1 m/s */
+const run = (s, upTo, every, profile, approach) => {
+  const line = s.g[0], m = new Matcher(index, profile), T0 = Date.parse('2026-11-12T10:00:00Z'); let hit = false, t = T0;
+  const feed = (p) => { t += every * 1000; if (m.push([p[0], p[1], t]).includes(s.id)) hit = true; };
+  const a = line[0], z = line[line.length - 1], len = Math.max(1, s.l), dir = [(z[0] - a[0]) / len, (z[1] - a[1]) / len];
+  if (approach) feed([a[0] - dir[0] * 20, a[1] - dir[1] * 20]);
+  const N = Math.max(1, Math.round((s.l * upTo) / every));
+  for (let i = 0; i <= N; i++) feed(alongLen(line, (upTo * i) / N));
+  if (approach) feed([z[0] + dir[0] * 20, z[1] + dir[1] * 20]);
+  return { hit, m };
+};
+// gerade Treppen (Luftlinie ≈ Länge); gefaltete Treppen kann GPS grundsätzlich nicht auflösen
+const single = DATA.stairs.filter((s) => s.k && s.g.length === 1 && s.l >= 15);
+const straight = single.filter((s) => dM(s.g[0][0], s.g[0][s.g[0].length - 1]) >= s.l * 0.85);
+const folded = single.length - straight.length;
+let standing = 0, full = 0, sixty = 0, passing = 0;
+for (const s of straight) {
+  const a = s.g[0][0], m = new Matcher(index, 'live'); let hit = false;
+  for (let i = 0; i < 60; i++) { const p = [a[0] + (6 / M_LAT) * Math.sin(i * 1.7), a[1] + (6 / M_LON) * Math.cos(i * 2.3), Date.parse('2026-11-12T10:00:00Z') + i * 1000]; if (m.push(p).includes(s.id)) hit = true; }
+  if (hit) standing++;
+  if (run(s, 1, 8, 'live', true).hit) full++;
+  if (run(s, 0.6, 4, 'live', false).hit) sixty++;
+  // quer am Einstieg vorbeigehen
+  const z = s.g[0][s.g[0].length - 1], len = Math.max(1, s.l), n = [-(z[1] - a[1]) * M_LON / len / M_LAT, (z[0] - a[0]) * M_LAT / len / M_LON], mp = new Matcher(index, 'live'); let hp = false;
+  for (let i = -5; i <= 5; i++) if (mp.push([a[0] + n[0] * i * 6, a[1] + n[1] * i * 6, Date.parse('2026-11-12T10:00:00Z') + i * 4000]).includes(s.id)) hp = true;
+  if (hp) passing++;
+}
+out.push(`     (${straight.length} gerade Treppen geprüft, ${folded} gefaltete ausgenommen)`);
+ok(standing === 0, `Am Einstieg stehen schaltet nichts frei (${standing} von ${straight.length})`);
+ok(passing === 0, `Am Einstieg vorbeigehen schaltet nichts frei (${passing} von ${straight.length})`);
+ok(sixty === 0, `60 % laufen reicht nicht (${sixty} von ${straight.length})`);
+ok(full >= straight.length * 0.97, `Ganz laufen wird erkannt (${full} von ${straight.length})`);
+const vog = byId.get(38610020), halfV = vog.g.length === 1 ? run(vog, 0.5, 5, 'live', false) : null;
+if (halfV) ok(!halfV.hit && halfV.m.partial && halfV.m.partial.id === vog.id, 'halbe Vogelsauer Treppe zählt nicht, Zwischenstand: ' + (halfV.m.partial ? Math.round(halfV.m.partial.f * 100) + ' %' : 'keiner'));
+
 // 9) Spielstand
 const log = [{ id: JAKOB, d: '2026-11-02' }, { id: JAKOB, d: '2026-11-03' }, { id: HOLST, d: '2026-11-10' }, { id: TTT, d: '2026-11-10', t: Date.parse('2026-11-10T05:30:00') }];
 const st = computeStats(log, byId, DATA.meta, '2026-11-11');
