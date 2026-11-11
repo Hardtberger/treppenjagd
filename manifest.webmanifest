@@ -1,0 +1,13 @@
+{
+  "name": "Treppenjagd Wuppertal",
+  "short_name": "Treppenjagd",
+  "description": "Sammle alle Treppen Wuppertals.",
+  "lang": "de",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#22292e",
+  "theme_color": "#22292e",
+  "icons": [{ "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

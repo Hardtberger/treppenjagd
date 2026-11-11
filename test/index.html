@@ -1,0 +1,61 @@
+<!doctype html><meta charset="utf-8"><title>Treppenjagd – Logiktests</title>
+<pre id="out">läuft …</pre>
+<script src="../js/match.js"></script><script src="../js/game.js"></script>
+<script>
+(async () => {
+const { buildIndex, matchTracks, parseTimelineJSON, Matcher } = window.TJMatch;
+const { computeStats, milestones, levelFor } = window.TJGame;
+const DATA = await (await fetch('../data/stairs.json')).json();
+const byId = new Map(DATA.stairs.map((s) => [s.id, s]));
+const index = buildIndex(DATA.stairs);
+const out = [];
+let fail = 0; const ok = (c, m) => { out.push((c ? 'ok   ' : 'FAIL ') + m); if (!c) fail++; };
+const jitter = (p, m) => [p[0] + (m / 110540) * (Math.sin(p[0] * 9e5) ), p[1] + (m / 69700) * Math.cos(p[1] * 9e5)];
+const walk = (id, t0, noise = 5) => byId.get(id).g.flatMap((l) => l).map((p, i) => [...jitter(p, noise), t0 + i * 8000]);
+
+const JAKOB = 93211072, HOLST = 26743278, TTT = 153827652;
+// 1) sauberer GPX-Lauf mit 5 m Rauschen
+let r = matchTracks(index, [walk(JAKOB, Date.parse('2026-10-03T10:00:00Z'))], 'gpx').map((x) => x.id);
+ok(r.includes(JAKOB), 'Jakobstreppe wird in GPX-Spur erkannt (' + r.length + ' Treffer)');
+// 2) nur die Hälfte gelaufen -> nicht erkannt
+const half = walk(HOLST, Date.now()); r = matchTracks(index, [half.slice(0, Math.floor(half.length * 0.4))], 'gpx').map((x) => x.id);
+ok(!r.includes(HOLST), 'halbe Holsteiner Treppe zählt nicht');
+// 3) 60 m parallel versetzt -> nicht erkannt
+r = matchTracks(index, [walk(TTT, Date.now(), 0).map((p) => [p[0] + 60 / 110540, p[1], p[2]])], 'gpx').map((x) => x.id);
+ok(!r.includes(TTT), '60 m daneben zählt nicht');
+// 4) zwei Tage -> zwei Besteigungen
+r = matchTracks(index, [[...walk(JAKOB, Date.parse('2026-10-03T10:00:00Z')), ...walk(JAKOB, Date.parse('2026-10-05T10:00:00Z'))]], 'gpx');
+ok(r.filter((x) => x.id === JAKOB).length === 2, 'Wiederholung an anderem Tag zählt extra');
+// 5) Google-Zeitachse, neues Geräteformat, nur wenige Punkte
+const g = byId.get(TTT).g.flatMap((l) => l); const pick = [g[0], g[Math.floor(g.length / 2)], g[g.length - 1]];
+const tl = { semanticSegments: [{ startTime: '2026-09-01T15:00:00.000+02:00', endTime: '2026-09-01T15:20:00.000+02:00',
+  timelinePath: pick.map((p, i) => ({ point: `${p[0]}°, ${p[1]}°`, time: `2026-09-01T15:0${i}:00.000+02:00` })) }] };
+let tr = parseTimelineJSON(JSON.stringify(tl));
+r = matchTracks(index, tr, 'timeline').map((x) => x.id);
+ok(tr.length === 1 && tr[0].length === 3 && r.includes(TTT), 'Zeitachse (semanticSegments) wird gelesen und erkannt');
+// 6) altes Takeout-Format
+const old = { timelineObjects: [{ activitySegment: { duration: { startTimestamp: '2025-05-01T10:00:00Z' }, waypointPath: { waypoints: pick.map((p) => ({ latE7: Math.round(p[0] * 1e7), lngE7: Math.round(p[1] * 1e7) })) } } }] };
+tr = parseTimelineJSON(JSON.stringify(old)); r = matchTracks(index, tr, 'timeline');
+ok(r.some((x) => x.id === TTT && x.t), 'Zeitachse (altes Takeout) wird gelesen, mit Datum');
+// 7) iOS-Format mit geo:-Strings
+const ios = [{ startTime: '2026-08-01T10:00:00.000+02:00', endTime: '2026-08-01T10:30:00.000+02:00', timelinePath: pick.map((p, i) => ({ point: `geo:${p[0]},${p[1]}`, durationMinutesOffsetFromStartTime: String(i) })) }];
+r = matchTracks(index, parseTimelineJSON(JSON.stringify(ios)), 'timeline').map((x) => x.id);
+ok(r.includes(TTT), 'Zeitachse (iOS geo:) wird gelesen');
+// 8) Live-Matcher Punkt für Punkt
+const m = new Matcher(index, 'live'); let live = [];
+for (const p of walk(HOLST, Date.now(), 4)) live.push(...m.push(p));
+ok(live.includes(HOLST), 'Live-Erkennung meldet Holsteiner Treppe');
+// 9) Spielstand
+const log = [{ id: JAKOB, d: '2026-11-02' }, { id: JAKOB, d: '2026-11-03' }, { id: HOLST, d: '2026-11-10' }, { id: TTT, d: '2026-11-10', t: Date.parse('2026-11-10T05:30:00') }];
+const st = computeStats(log, byId, DATA.meta, '2026-11-11');
+const expXp = 155 * 2 + 25 + 155 + 114 * 2 + 25 + 174 * 2 + 25;
+ok(st.xp === expXp && st.found === 3 && st.streak === 2 && st.week === 2 && st.early, `Punkte ${st.xp}/${expXp}, Serie ${st.streak}, Woche ${st.week}`);
+const ms = milestones(st).filter((x) => x.done).map((x) => x.id);
+ok(['found1', 'height12', 'ttt', 'holsteiner', 'jakob', 'big150', 'early'].every((i) => ms.includes(i)), 'Meilensteine: ' + ms.join(', '));
+ok(levelFor(0).level === 1 && levelFor(100).level === 2 && levelFor(1e6).level === 15, 'Level-Grenzen');
+out.push(`Level jetzt: ${st.level.level} ${st.level.title}`);
+out.push(fail ? fail + ' FEHLER' : 'ALLE TESTS BESTANDEN');
+document.getElementById('out').textContent = out.join('\n');
+window.TEST_RESULT = out;
+})();
+</script>

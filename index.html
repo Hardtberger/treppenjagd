@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Treppenjagd Wuppertal</title>
+<meta name="description" content="Sammle alle Treppen Wuppertals. Level, Meilensteine und Abzeichen – dein Standort bleibt auf deinem Gerät.">
+<meta name="theme-color" content="#22292e">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon.svg">
+<!-- Schriften: Anton + Aileron über Adobe Fonts -->
+<link rel="stylesheet" href="https://use.typekit.net/ooe7ugq.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="tj-b" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#dfa268"/><stop offset="1" stop-color="#8a5226"/></linearGradient>
+    <linearGradient id="tj-s" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#dfe5e8"/><stop offset="1" stop-color="#7c8990"/></linearGradient>
+    <linearGradient id="tj-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fbd866"/><stop offset="1" stop-color="#c58a08"/></linearGradient>
+    <linearGradient id="tj-w" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3fc48a"/><stop offset="1" stop-color="#125c38"/></linearGradient>
+    <clipPath id="tj-hex"><path d="M50 4 90 27V73L50 96 10 73V27Z"/></clipPath>
+  </defs>
+</svg>
+
+<main id="views">
+  <!-- Karte -->
+  <section id="view-map" class="view active" aria-label="Karte">
+    <div id="map"></div>
+    <button id="hud" class="hud" type="button" aria-label="Fortschritt öffnen">
+      <span class="hud-level" id="hud-level">1</span>
+      <span class="hud-main">
+        <span class="hud-title" id="hud-title">Talkind</span>
+        <span class="bar"><span class="bar-fill" id="hud-bar"></span></span>
+      </span>
+      <span class="hud-count"><b id="hud-found">0</b><span id="hud-total">/ 0</span></span>
+    </button>
+    <div class="map-tools">
+      <button id="btn-filter" class="tool" type="button" aria-pressed="false" title="Nur offene Treppen zeigen">Nur offene</button>
+      <button id="btn-locate" class="tool icon" type="button" title="Mein Standort" aria-label="Mein Standort">
+        <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="4" fill="currentColor"/><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+    </div>
+    <button id="btn-tour" class="tour" type="button">
+      <span class="tour-dot"></span><span id="tour-label">Tour starten</span>
+    </button>
+    <div id="tour-status" class="tour-status" hidden></div>
+  </section>
+
+  <!-- Fortschritt -->
+  <section id="view-progress" class="view scroll" aria-label="Fortschritt">
+    <div class="wrap" id="progress-body"></div>
+  </section>
+
+  <!-- Abzeichen -->
+  <section id="view-badges" class="view scroll" aria-label="Meilensteine">
+    <div class="wrap" id="badges-body"></div>
+  </section>
+
+  <!-- Mehr -->
+  <section id="view-more" class="view scroll" aria-label="Mehr">
+    <div class="wrap">
+      <h1>Mehr</h1>
+
+      <div class="card">
+        <h2>Vergangene Wege nachtragen</h2>
+        <p>Du warst schon unterwegs? Lade aufgezeichnete Wege hoch – die App findet die Treppen darin und schreibt sie dir gut. Die Datei wird nur auf deinem Gerät ausgewertet.</p>
+        <label class="btn primary" for="file-import">Datei auswählen</label>
+        <input id="file-import" type="file" accept=".gpx,.json,.geojson,application/json,application/gpx+xml" multiple hidden>
+        <details>
+          <summary>Welche Dateien gehen?</summary>
+          <ul>
+            <li><b>GPX</b> aus Komoot, Strava, Garmin, Apple-Workout-Exporten oder jeder Tracking-App – am genauesten.</li>
+            <li><b>Google-Maps-Zeitachse</b> (<code>Zeitachse.json</code> / <code>Timeline.json</code>): Die Zeitachse liegt inzwischen auf deinem Handy. Exportieren kannst du sie in den Zeitachsen-Einstellungen von Google Maps bzw. in den Android-Standorteinstellungen unter „Zeitachse“. Ältere Takeout-Exporte funktionieren auch.</li>
+            <li>Die Zeitachse ist grob. Deshalb zeigt dir die App erst eine Liste der erkannten Treppen, und du bestätigst, was stimmt.</li>
+          </ul>
+        </details>
+      </div>
+
+      <div class="card">
+        <h2>Wochenziel</h2>
+        <p>Du entscheidest, wie viel dir guttut. Das Ziel lässt sich jederzeit ändern.</p>
+        <div class="seg" id="goal-seg" role="group" aria-label="Treppen pro Woche"></div>
+      </div>
+
+      <div class="card">
+        <h2>So funktioniert die Treppenjagd</h2>
+        <ul class="plain">
+          <li><b>Tour starten</b> – solange die App offen ist, erkennt sie per GPS jede Treppe, die du läufst.</li>
+          <li><b>1 Stufe = 1 Punkt.</b> Eine neue Treppe zählt doppelt plus 25 Punkte. Wiederholungen zählen einfach, höchstens einmal pro Treppe und Tag.</li>
+          <li><b>Sammelbar</b> sind Treppen ab 20 Stufen oder 15 m Länge. Kleinere geben Bonuspunkte.</li>
+          <li><b>Abhaken von Hand</b> geht auch – wenn das GPS im Häuserschatten mal danebenliegt.</li>
+        </ul>
+        <details>
+          <summary>Warum das motiviert</summary>
+          <ul>
+            <li><b>Selbstbestimmung:</b> keine Pflichtaufgaben, keine Tagesserie, die reißt. Aufträge sind Vorschläge, dein Wochenziel wählst du selbst.</li>
+            <li><b>Kompetenz:</b> jede Stufe zählt sofort, Level sind am Anfang nah und werden später größer.</li>
+            <li><b>Verbundenheit:</b> du sammelst deine Stadt – Bezirk für Bezirk, Treppe für Treppe mit Namen.</li>
+            <li><b>Ziel in Sicht:</b> die App zeigt immer die nächste Treppe und was dir zum nächsten Meilenstein fehlt.</li>
+          </ul>
+        </details>
+      </div>
+
+      <div class="card">
+        <h2>Deine Daten</h2>
+        <p>Fortschritt und Standort bleiben auf diesem Gerät. Es gibt kein Konto und keinen Server, der mitliest. Sichere deinen Stand ab und zu als Datei.</p>
+        <div class="row">
+          <button class="btn" id="btn-export" type="button">Stand sichern</button>
+          <label class="btn" for="file-restore">Stand laden</label>
+          <input id="file-restore" type="file" accept=".json,application/json" hidden>
+        </div>
+        <button class="btn danger" id="btn-reset" type="button">Alles zurücksetzen</button>
+      </div>
+
+      <p class="fine">Kartendaten und Treppen: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>-Mitwirkende (ODbL). Quartiersgrenzen: Datenquelle CC-BY-4.0 – Stadt Wuppertal – offenedaten-wuppertal.de; der Ölberg ist entlang der Hochstraße von der Nordstadt abgetrennt. Fehlt eine Treppe oder stimmt eine Stufenzahl nicht? Trag sie bei OpenStreetMap ein – beim nächsten Daten-Update ist sie dabei. Stufenzahlen mit „ca.“ und alle Höhenangaben sind geschätzt.</p>
+    </div>
+  </section>
+</main>
+
+<nav class="tabs" aria-label="Hauptnavigation">
+  <button data-view="map" class="active" type="button"><svg viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Zm0 2.2 6 2v9.6l-6-2V6.2Z"/></svg>Karte</button>
+  <button data-view="progress" type="button"><svg viewBox="0 0 24 24"><path d="M2 20v-4h6v-5h6V6h8v14H2Z"/></svg>Fortschritt</button>
+  <button data-view="badges" type="button"><svg viewBox="0 0 24 24"><path d="M12 2 20 6.5v9L12 20l-8-4.5v-9L12 2Zm0 5-1.5 3.2-3.5.4 2.6 2.4-.7 3.5 3.1-1.8 3.1 1.8-.7-3.5 2.6-2.4-3.5-.4L12 7Z"/></svg>Meilensteine<span class="dot" id="badge-dot" hidden></span></button>
+  <button data-view="more" type="button"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="19" cy="12" r="2.2"/></svg>Mehr</button>
+</nav>
+
+<div id="sheet" class="sheet" hidden></div>
+<div id="modal" class="modal" hidden></div>
+<div id="toast" class="toast" hidden role="status"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="js/match.js"></script>
+<script src="js/game.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
